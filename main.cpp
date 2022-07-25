@@ -4,9 +4,25 @@
 #include <mutex>
 using namespace std;
 
+
+
+// data
+
 // common data for threads
 string railwayStation_trainLabel;  // the symbol of the train, which stands at the station.
 mutex railwayStation_access;
+
+// condition variable: railway station
+//bool wait;
+mutex wait_access;
+
+// condition variable: message output queue to the console
+//bool fOut;
+mutex fOut_access;
+
+
+
+
 
 
 /*!
@@ -15,36 +31,26 @@ mutex railwayStation_access;
  * @param time - train travel time.
  */
 void thread_train(const string& label, int time) {
-    // data
-    bool fFirst;
-
     // train simulation on the way
     this_thread::sleep_for(chrono::seconds(time));
 
-    // station occupancy check cycle
-    fFirst = false;
-    while( true ) {
-        // work with station data
-        railwayStation_access.lock();
-        // if the station is free
-        if( railwayStation_trainLabel == "none" ) {
-            // then display the corresponding message
-            cout << "Train '" << label << "' arrived at the station.\n";
-            railwayStation_trainLabel = label;  // the mark at the station of the arriving train
-            railwayStation_access.unlock();
-            break;
-        } else {
-            // otherwise, display a message about waiting for a train of a free place at the station once
-            if( !fFirst ) {
-                fFirst = true;
-                cout << "Train '" << label << "' is waiting for a free seat at the station.\n";
-            }
-        }
-        railwayStation_access.unlock();
+    fOut_access.lock();
+    cout << "Train '" << label << "' is waiting for a free seat at the station.\n";
+    fOut_access.unlock();
 
-        // wait until the already occupied space becomes free.
-        this_thread::sleep_for(chrono::milliseconds(100));
-    }
+    // if blocked, then wait
+    wait_access.lock();
+    wait_access.unlock();
+
+    // celebrating our arriving train
+    railwayStation_access.lock();
+    railwayStation_trainLabel = label;
+    railwayStation_access.unlock();
+
+    // and display a message about it
+    fOut_access.lock();
+    cout << "Train '" << label << "' arrived at the station.\n";
+    fOut_access.unlock();
 }
 
 
@@ -66,39 +72,58 @@ int main() {
         cout << "Enter time:";
         cin >> t.time;
     }
+    cout << endl;
 
     // start threads
     railwayStation_trainLabel = "none";
-    for(auto& t: train) {
+    wait_access.lock();  // blocking the station
+    for(auto& t: train)
         t.track = new thread(thread_train, t.label, t.time);
-    }
 
     // station work
     while(true) {
         // data
         bool flag;
         string command;
+        string trainLabel;
+
+        // momentarily unlock the wait mutex
+        wait_access.unlock();
+        wait_access.lock();
+
+        // read the designation of the arrived train
+        railwayStation_access.lock();
+        trainLabel = railwayStation_trainLabel;
+        railwayStation_access.unlock();
 
         // work with station data
-        railwayStation_access.lock();
         // if a train arrives at the station
-        if( railwayStation_trainLabel != "none" ) {
+        while( trainLabel != "none" ) {
             // command input
-            cout << "To send train '" << railwayStation_trainLabel << "', enter the command 'depart':";
+            fOut_access.lock();
+            cout << "To send train '" << trainLabel << "', enter the command 'depart':";
             cin >> command;
+            fOut_access.unlock();
 
             // team analysis
             if( command == "depart" ) {
-                cout << "Train '" << railwayStation_trainLabel << "' has departed.\n";
+                fOut_access.lock();
+                cout << "Train '" << trainLabel << "' has departed.\n";
+                fOut_access.unlock();
 
                 // departed train mark
                 for(auto &t: train)
-                    if( railwayStation_trainLabel == t.label )
+                    if (trainLabel == t.label) {
                         t.flag = true;
-                railwayStation_trainLabel = "none";
+                        break;
+                    }
+
+                // note that there is no train at the station
+                railwayStation_access.lock();
+                railwayStation_trainLabel = trainLabel = "none";
+                railwayStation_access.unlock();
             }
         }
-        railwayStation_access.unlock();
 
         // if all trains have been at the station, then exit the station maintenance cycle
         flag = true;
@@ -107,14 +132,12 @@ int main() {
         if( flag )
             break;
 
-        // wait
+        // pause
         this_thread::sleep_for(chrono::milliseconds(10));
     }
 
-    // shutting down threads
-    for( auto &t: train )
-        if( t.track->joinable() )
-            t.track->join();
+    // unblocking the station
+    wait_access.unlock();
 
     return 0;
 }
