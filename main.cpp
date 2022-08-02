@@ -1,5 +1,6 @@
 #include <iostream>
 #include <string>
+#include <queue>
 #include <thread>
 #include <mutex>
 using namespace std;
@@ -9,15 +10,10 @@ using namespace std;
 // data
 
 // common data for threads
-string railwayStation_trainLabel;  // the symbol of the train, which stands at the station.
+queue<string> railwayStation;
 mutex railwayStation_access;
 
-// condition variable: railway station
-//bool wait;
-mutex wait_access;
-
 // condition variable: message output queue to the console
-//bool fOut;
 mutex fOut_access;
 
 
@@ -34,29 +30,23 @@ void thread_train(const string& label, int time) {
     // train simulation on the way
     this_thread::sleep_for(chrono::seconds(time));
 
+    // message output
     fOut_access.lock();
     cout << "Train '" << label << "' is waiting for a free seat at the station.\n";
     fOut_access.unlock();
 
-    // if blocked, then wait
-    wait_access.lock();
-    wait_access.unlock();
-
-    // celebrating our arriving train
+    // queuing a train
     railwayStation_access.lock();
-    railwayStation_trainLabel = label;
+    railwayStation.push(label);
     railwayStation_access.unlock();
-
-    // and display a message about it
-    fOut_access.lock();
-    cout << "Train '" << label << "' arrived at the station.\n";
-    fOut_access.unlock();
 }
 
 
 
 int main() {
     // data
+
+    // train data
     const int N = 3;
     struct Train {
         string label;             // train symbol
@@ -64,6 +54,8 @@ int main() {
         thread* track = nullptr;  // thread object
         bool flag = false;        // train arrival flag
     } train[N];
+    // flag
+    bool everyoneWasAtTheStation;
 
     // data input
     for(auto &t: train) {
@@ -75,69 +67,72 @@ int main() {
     cout << endl;
 
     // start threads
-    railwayStation_trainLabel = "none";
-    wait_access.lock();  // blocking the station
     for(auto& t: train)
         t.track = new thread(thread_train, t.label, t.time);
 
     // station work
-    while(true) {
+    do{
         // data
-        bool flag;
-        string command;
         string trainLabel;
 
-        // momentarily unlock the wait mutex
-        wait_access.unlock();
-        wait_access.lock();
+        // pause (poll the queue twice per second)
+        this_thread::sleep_for(chrono::milliseconds(500));
 
-        // read the designation of the arrived train
+        // get value from queue
         railwayStation_access.lock();
-        trainLabel = railwayStation_trainLabel;
+        if( !railwayStation.empty() ) {
+            trainLabel = railwayStation.front();
+            railwayStation.pop();
+        } else {
+            trainLabel = "none";
+        }
         railwayStation_access.unlock();
 
-        // work with station data
-        // if a train arrives at the station
-        while( trainLabel != "none" ) {
-            // command input
+        // if it is a train designation
+        if( trainLabel != "none" ) {
+            // data
+            string command;
+            bool commandCompletedFlag;
+
+            // then the conclusion about the arrival of the train at the station
             fOut_access.lock();
-            cout << "To send train '" << trainLabel << "', enter the command 'depart':";
-            cin >> command;
+            cout << "Train '" << trainLabel << "' arrived at the station.\n";
             fOut_access.unlock();
 
-            // team analysis
-            if( command == "depart" ) {
+            // command input and execution cycle
+            commandCompletedFlag = false;  // there is no executed command yet
+            while( !commandCompletedFlag ) {
+                // command input
                 fOut_access.lock();
-                cout << "Train '" << trainLabel << "' has departed.\n";
+                cout << "To send train '" << trainLabel << "', enter the command 'depart':";
+                cin >> command;
                 fOut_access.unlock();
 
-                // departed train mark
-                for(auto &t: train)
-                    if (trainLabel == t.label) {
-                        t.flag = true;
-                        break;
-                    }
+                // command analysis
+                if (command == "depart") {
+                    // conclusion about the departure of the train
+                    fOut_access.lock();
+                    cout << "Train '" << trainLabel << "' has departed.\n";
+                    fOut_access.unlock();
 
-                // note that there is no train at the station
-                railwayStation_access.lock();
-                railwayStation_trainLabel = trainLabel = "none";
-                railwayStation_access.unlock();
-            }
-        }
+                    // departed train mark
+                    for (auto &t: train)
+                        if (trainLabel == t.label) {
+                            t.flag = true;
+                            break;
+                        }
+
+                    // flag setting - the command is executed.
+                    commandCompletedFlag = true;
+                }// end of "if (command == "depart")"
+            }// end of "while( !commandCompletedFlag )"
+        }// end of "if( trainLabel != "none" )"
 
         // if all trains have been at the station, then exit the station maintenance cycle
-        flag = true;
+        everyoneWasAtTheStation = true;
         for(auto &t: train)
-            flag &= t.flag;
-        if( flag )
-            break;
-
-        // pause
-        this_thread::sleep_for(chrono::milliseconds(10));
-    }
-
-    // unblocking the station
-    wait_access.unlock();
+            everyoneWasAtTheStation &= t.flag;
+    }while( !everyoneWasAtTheStation );
 
     return 0;
 }
